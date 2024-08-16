@@ -1,0 +1,1 @@
+# powershell-kullanici-yetkilendirme-raporu
