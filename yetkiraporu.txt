@@ -1,5 +1,12 @@
 # Gerekli modülleri yükleme
+if (-not (Get-Module -Name ImportExcel)) {
+    Install-Module -Name ImportExcel -Scope CurrentUser -Force
+}
 Import-Module -Name ImportExcel
+
+if (-not (Get-Module -Name ActiveDirectory)) {
+    Install-Module -Name ActiveDirectory -Scope CurrentUser -Force
+}
 Import-Module -Name ActiveDirectory
 
 # Ana paylaşılan klasör yolunu belirtiyoruz
@@ -15,12 +22,23 @@ $folderPermissions = @{}
 $usersList = @{}
 
 # Ana klasör altındaki tüm klasörleri alıyoruz
-$sharedFolders = Get-ChildItem -Path $rootFolder -Directory
+try {
+    $sharedFolders = Get-ChildItem -Path $rootFolder -Directory
+} catch {
+    Write-Error "Ana klasör altında klasörler alınırken bir hata oluştu: $_"
+    exit
+}
 
 # Tüm paylaşılan klasörlerde döngü oluşturuyoruz
 foreach ($folder in $sharedFolders) {
     $folderPath = $folder.FullName
-    $acl = Get-Acl $folderPath
+    try {
+        $acl = Get-Acl $folderPath
+    } catch {
+        Write-Warning "İzinler alınırken bir hata oluştu: $folderPath - $_"
+        continue
+    }
+
     $permissions = $acl.Access
 
     foreach ($permission in $permissions) {
@@ -43,6 +61,7 @@ foreach ($folder in $sharedFolders) {
             $fullName = $userObject.DisplayName
         } catch {
             $fullName = "Bilinmeyen Kullanıcı"
+            Write-Warning "Kullanıcı bulunamadı: $user - $_"
         }
 
         # Kullanıcıyı ve ad soyad bilgisini saklıyoruz
@@ -88,6 +107,9 @@ $headerRow = @('DOSYA İSİMLERİ/KULLANICI İSİMLERİ') + ($sortedUsersList | 
 $reportWithHeader = $report | Select-Object -Property $headerRow
 
 # Verileri Excel'e aktarıyoruz
-$reportWithHeader | Export-Excel -Path $outputFilePath -AutoSize -WorkSheetname "YetkilendirmeRaporu"
-
-Write-Output "Rapor başarıyla $outputFilePath yoluna kaydedildi."
+try {
+    $reportWithHeader | Export-Excel -Path $outputFilePath -AutoSize -WorkSheetname "YetkilendirmeRaporu"
+    Write-Output "Rapor başarıyla $outputFilePath yoluna kaydedildi."
+} catch {
+    Write-Error "Excel dosyası oluşturulurken bir hata oluştu: $_"
+}
