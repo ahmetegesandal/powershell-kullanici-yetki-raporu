@@ -1,0 +1,93 @@
+# Gerekli modülleri yükleme
+Import-Module -Name ImportExcel
+Import-Module -Name ActiveDirectory
+
+# Ana paylaşılan klasör yolunu belirtiyoruz
+$rootFolder = "C:\Users\Ahmet Ege Sandal\Desktop\kaynak"
+
+# Tarih ve saat bilgisini alıyoruz ve dosya adını oluşturuyoruz
+$currentDateTime = Get-Date -Format "dd.MM.yyyy_HH.mm"
+$outputFileName = "KullaniciYetkilendirme_$currentDateTime.xlsx"
+$outputFilePath = "C:\$outputFileName"
+
+# Kullanıcılar ve klasörler için boş bir hash table oluşturuyoruz
+$folderPermissions = @{}
+$usersList = @{}
+
+# Ana klasör altındaki tüm klasörleri alıyoruz
+$sharedFolders = Get-ChildItem -Path $rootFolder -Directory
+
+# Tüm paylaşılan klasörlerde döngü oluşturuyoruz
+foreach ($folder in $sharedFolders) {
+    $folderPath = $folder.FullName
+    $acl = Get-Acl $folderPath
+    $permissions = $acl.Access
+
+    foreach ($permission in $permissions) {
+        $user = $permission.IdentityReference.Value
+        $rights = $permission.FileSystemRights
+        $access = ""
+
+        # Okuma ve yazma izinlerini kontrol ediyoruz
+        if ($rights -band [System.Security.AccessControl.FileSystemRights]::Read) {
+            $access += "O"
+        }
+        if ($rights -band [System.Security.AccessControl.FileSystemRights]::Write) {
+            $access += "Y"
+        }
+
+        # Kullanıcı adını uygun formata dönüştürme
+        try {
+            $userName = $user -replace "^[^\\]+\\", ""  # DOMAIN\ kısmını kaldır
+            $userObject = Get-ADUser -Identity $userName -Properties DisplayName
+            $fullName = $userObject.DisplayName
+        } catch {
+            $fullName = "Bilinmeyen Kullanıcı"
+        }
+
+        # Kullanıcıyı ve ad soyad bilgisini saklıyoruz
+        if (-not $usersList.ContainsKey($user)) {
+            $usersList[$user] = $fullName
+        }
+
+        # Kullanıcı izinlerini klasörlere göre saklayalım
+        if (-not $folderPermissions.ContainsKey($folderPath)) {
+            $folderPermissions[$folderPath] = @{}
+        }
+        $folderPermissions[$folderPath][$user] = $access
+    }
+}
+
+# Kullanıcıları alfabetik sıraya göre sıralıyoruz
+$sortedUsersList = $usersList.GetEnumerator() | Sort-Object Name | ForEach-Object { $_.Key }
+
+# Excel için verileri hazırlıyoruz
+$report = @()
+
+foreach ($folder in $folderPermissions.Keys) {
+    # Her dosya için bir satır oluşturuyoruz
+    $row = @{'DOSYA İSİMLERİ/KULLANICI İSİMLERİ' = $folder}
+
+    # Kullanıcıları sıralı olarak ekliyoruz
+    foreach ($user in $sortedUsersList) {
+        $userNameWithFullName = "$user - $($usersList[$user])"
+        if ($folderPermissions[$folder].ContainsKey($user)) {
+            $row[$userNameWithFullName] = $folderPermissions[$folder][$user]
+        } else {
+            $row[$userNameWithFullName] = ""
+        }
+    }
+
+    $report += New-Object PSObject -Property $row
+}
+
+# Excel için başlıkları sıralıyoruz
+$headerRow = @('DOSYA İSİMLERİ/KULLANICI İSİMLERİ') + ($sortedUsersList | ForEach-Object { "$_ - $($usersList[$_])" })
+
+# Verileri Excel'e aktarmadan önce sütun başlıklarını ekliyoruz
+$reportWithHeader = $report | Select-Object -Property $headerRow
+
+# Verileri Excel'e aktarıyoruz
+$reportWithHeader | Export-Excel -Path $outputFilePath -AutoSize -WorkSheetname "YetkilendirmeRaporu"
+
+Write-Output "Rapor başarıyla $outputFilePath yoluna kaydedildi."
